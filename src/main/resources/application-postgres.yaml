@@ -1,0 +1,10 @@
+# Activate with: --spring.profiles.active=postgres
+# Secrets and connection details come from environment variables.
+spring:
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/usermgmt}
+    username: ${DB_USERNAME:usermgmt}
+    password: ${DB_PASSWORD}
+  flyway:
+    # schema only - no sample data in production
+    locations: classpath:db/migration
