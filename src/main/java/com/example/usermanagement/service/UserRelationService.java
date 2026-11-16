@@ -4,23 +4,20 @@ import com.example.usermanagement.dto.group.GroupResponse;
 import com.example.usermanagement.dto.role.RoleResponse;
 import com.example.usermanagement.dto.user.UserAccessResponse;
 import com.example.usermanagement.exception.ResourceNotFoundException;
-import com.example.usermanagement.model.Permission;
 import com.example.usermanagement.model.Role;
 import com.example.usermanagement.model.User;
 import com.example.usermanagement.model.UserGroup;
-import com.example.usermanagement.repository.PermissionRepository;
-import com.example.usermanagement.repository.RoleRepository;
-import com.example.usermanagement.repository.UserGroupRepository;
-import com.example.usermanagement.repository.UserRepository;
+import com.example.usermanagement.repository.*;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Comparator;
 import java.util.List;
 import java.util.Set;
-import java.util.TreeSet;
 
-/** What a user is linked to: direct roles, group memberships and the resulting access. */
+/**
+ * What a user is linked to: direct roles, group memberships and the resulting access.
+ */
 @Service
 @Transactional(readOnly = true)
 public class UserRelationService {
@@ -47,14 +44,18 @@ public class UserRelationService {
         return roleRepository.findDirectByUserId(userId).stream().map(RoleResponse::from).toList();
     }
 
-    /** Idempotent: assigning an already assigned role is a no-op. */
+    /**
+     * Idempotent: assigning an already assigned role is a no-op.
+     */
     @Transactional
     public void assignRole(Long userId, Long roleId) {
         User user = getUser(userId);
         user.getRoles().add(getRole(roleId));
     }
 
-    /** Idempotent: removing a role that is not assigned is a no-op. */
+    /**
+     * Idempotent: removing a role that is not assigned is a no-op.
+     */
     @Transactional
     public void removeRole(Long userId, Long roleId) {
         User user = getUser(userId);
@@ -106,21 +107,23 @@ public class UserRelationService {
 
     // ----------------------------------------------------------------- access
 
-    /** Flattens direct roles + group roles into the user's final permission set. */
+    /**
+     * Flattens direct roles + group roles into the user's final permission set.
+     * Five lightweight statements (header, groups, direct roles, group roles, permissions),
+     * all returning plain strings: no entities, no lazy loading, no N+1.
+     */
     public UserAccessResponse getAccess(Long userId) {
-        User user = getUser(userId);
-
-        List<String> groups = groupRepository.findByUserId(userId).stream().map(UserGroup::getName).toList();
-        List<String> directRoles = roleRepository.findDirectByUserId(userId).stream().map(Role::getName).toList();
-        List<String> groupRoles = roleRepository.findViaGroupsByUserId(userId).stream().map(Role::getName).toList();
-
-        Set<String> permissions = new TreeSet<>();
-        permissionRepository.findDirectByUserId(userId).stream().map(Permission::getName).forEach(permissions::add);
-        permissionRepository.findViaGroupsByUserId(userId).stream().map(Permission::getName).forEach(permissions::add);
+        UserHeader user = userRepository.findHeaderById(userId)
+                .orElseThrow(() -> ResourceNotFoundException.of("User", userId));
 
         return new UserAccessResponse(
-                user.getId(), user.getUsername(), user.getActive(),
-                groups, directRoles, groupRoles, List.copyOf(permissions));
+                userId,
+                user.getUsername(),
+                user.getActive(),
+                groupRepository.findNamesByUserId(userId),
+                roleRepository.findDirectNamesByUserId(userId),
+                roleRepository.findViaGroupsNamesByUserId(userId),
+                permissionRepository.findEffectiveNamesByUserId(userId));
     }
 
     // ---------------------------------------------------------------- helpers

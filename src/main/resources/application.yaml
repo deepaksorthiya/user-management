@@ -1,11 +1,25 @@
 spring:
   application:
     name: user-management
+
   # ---- Default profile: in-memory H2 (PostgreSQL compatibility mode) ----
   datasource:
-    url: jdbc:h2:mem:usermgmt;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH;DB_CLOSE_DELAY=-1
+    url: jdbc:h2:mem:testdb;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH;DB_CLOSE_DELAY=-1
     username: sa
     password:
+    hikari:
+      pool-name: usermgmt-pool
+      # Fixed-size pool (min = max): no resize storms under load. Size it to what the DATABASE can
+      # serve (roughly cores * 2 + spindles), not to the number of request threads.
+      maximum-pool-size: ${DB_POOL_SIZE:10}
+      minimum-idle: ${DB_POOL_SIZE:10}
+      # Fail fast instead of piling up when the pool is exhausted (virtual threads make piling cheap).
+      connection-timeout: 3000
+      max-lifetime: 1740000          # 29 min, below typical proxy / DB idle limits
+      # Hibernate opens transactions itself; with auto-commit off it can skip the per-connection
+      # "set autocommit" round trips (see provider_disables_autocommit below).
+      auto-commit: false
+
   jpa:
     open-in-view: false
     hibernate:
@@ -14,11 +28,29 @@ spring:
       hibernate:
         jdbc:
           time_zone: UTC
+          batch_size: 50          # JDBC batching for inserts/updates/deletes of many rows
+        order_inserts: true       # group statements per table so batches actually fill up
+        order_updates: true
+        default_batch_fetch_size: 50   # lazy collections / proxies load 50 at a time: kills N+1
+        connection:
+          provider_disables_autocommit: true
+        query:
+          # Fail loudly instead of silently paginating IN MEMORY when a collection is join-fetched
+          fail_on_pagination_over_collection_fetch: true
+        log_slow_query: 500       # ms - logs any statement slower than this
+        generate_statistics: false
         show_sql: true
+
   flyway:
     enabled: true
     # schema migrations + sample data (sample data is NOT loaded in the postgres profile)
     locations: classpath:db/migration,classpath:db/sample-data
+
+  data:
+    web:
+      pageable:
+        default-page-size: 20
+        max-page-size: 100        # a client can never ask for ?size=1000000
 
   mvc:
     problemdetails:

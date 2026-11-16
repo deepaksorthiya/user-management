@@ -19,7 +19,9 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Set;
 
-/** What a role is linked to: its permissions, and who/what it is assigned to. */
+/**
+ * What a role is linked to: its permissions, and who/what it is assigned to.
+ */
 @Service
 @Transactional(readOnly = true)
 public class RoleRelationService {
@@ -70,10 +72,13 @@ public class RoleRelationService {
 
     // ------------------------------------------------------- who has the role
 
-    /** Users the role is assigned to directly (not through a group). */
+    /**
+     * Users the role is assigned to directly (not through a group).
+     */
     public PageResponse<UserResponse> getUsers(Long roleId, Pageable pageable) {
         requireRole(roleId);
-        return PageResponse.from(userRepository.findByRolesId(roleId, pageable).map(UserResponse::from));
+        Sorts.require(pageable, Sorts.USER);
+        return PageResponse.from(userRepository.findResponsesByRoleId(roleId, pageable));
     }
 
     public List<GroupResponse> getGroups(Long roleId) {

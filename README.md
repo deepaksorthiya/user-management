@@ -1,7 +1,7 @@
 # user-management
 
 Spring Boot 4.1 / Java 21 REST API for **users, groups, roles and permissions**
-(Spring Data JPA + Hibernate, Flyway, H2 now, PostgreSQL later). Version `0.1.0`.
+(Spring Data JPA + Hibernate, Flyway, H2 now, PostgreSQL later). Version `0.3.0`.
 
 > `groupId` is the placeholder `com.example`; change it (and the package) to yours.
 > If you are on another Boot 4.x release, change the parent version in `pom.xml`.
@@ -21,19 +21,25 @@ mvn test
 
 ```
 User ──< user_roles >── Role ──< role_permissions >── Permission
- │                       │
- └─< group_members >─ UserGroup ──< group_roles >────┘
+ │                       │                                  │
+ └─< group_members >─ UserGroup ──< group_roles >───────────┤
+                         └──────< group_permissions >───────┘
 ```
 
-Effective access of a user = **direct roles + roles of every group the user is in**,
-flattened into permissions (`GET /users/{id}/access`).
+Effective access of a user = the union of
 
-| Entity      | Table         | Owns (JPA `@ManyToMany`)                          |
-|-------------|---------------|---------------------------------------------------|
-| `User`      | `users`       | `roles` (user_roles), `userGroups` (group_members) |
-| `UserGroup` | `user_groups` | `roles` (group_roles)                             |
-| `Role`      | `roles`       | `permissions` (role_permissions)                  |
-| `Permission`| `permissions` | nothing (looked up through queries)               |
+1. permissions of the roles assigned **directly to the user**,
+2. permissions of the roles assigned to **every group the user is in**,
+3. permissions granted **directly to every group the user is in** (`group_permissions`),
+
+flattened and de-duplicated (`GET /users/{id}/access`, one SQL statement for the permissions).
+
+| Entity       | Table         | Owns (JPA `@ManyToMany`)                                 |
+|--------------|---------------|----------------------------------------------------------|
+| `User`       | `users`       | `roles` (user_roles), `userGroups` (group_members)       |
+| `UserGroup`  | `user_groups` | `roles` (group_roles), `permissions` (group_permissions) |
+| `Role`       | `roles`       | `permissions` (role_permissions)                         |
+| `Permission` | `permissions` | nothing (looked up through queries)                      |
 
 Design notes
 
@@ -63,50 +69,59 @@ Lists of users / members / role assignees are **paged**: `?page=0&size=20&sort=u
 `PUT`/`DELETE` on a relation are idempotent and return `204`.
 
 ### Users — `UserController`
-| Method | Path | |
-|---|---|---|
-| GET | `/users?q=&active=` | search + page |
-| GET | `/users/{id}` | |
-| POST | `/users` | `201` + `Location` |
-| PUT | `/users/{id}` | email, firstName, lastName, active |
-| PUT | `/users/{id}/password` | `204` |
-| DELETE | `/users/{id}` | `204` |
+
+| Method | Path                                    |                                                                                                    |
+|--------|-----------------------------------------|----------------------------------------------------------------------------------------------------|
+| GET    | `/users?q=&active=&page=&size=&sort=`   | search + offset page (sort: `id`, `username`, `email`, `createdAt`; `q` >= 3 chars; `size` <= 100) |
+| GET    | `/users/scroll?q=&active=&after=&size=` | **keyset** page for big data / exports (`size` <= 200, pass `nextCursor` as `after`)               |
+| GET    | `/users/{id}`                           |                                                                                                    |
+| POST   | `/users`                                | `201` + `Location`                                                                                 |
+| PUT    | `/users/{id}`                           | email, firstName, lastName, active                                                                 |
+| PUT    | `/users/{id}/password`                  | `204`                                                                                              |
+| DELETE | `/users/{id}`                           | `204`                                                                                              |
 
 ### User relations — `UserRelationController`
-| Method | Path | |
-|---|---|---|
-| GET / PUT | `/users/{id}/roles` | list / replace all (`{"ids":[1,2]}`) |
-| PUT / DELETE | `/users/{id}/roles/{roleId}` | assign / remove |
-| GET / PUT | `/users/{id}/groups` | list / replace all |
-| PUT / DELETE | `/users/{id}/groups/{groupId}` | join / leave |
-| GET | `/users/{id}/access` | groups, direct roles, group roles, effective permissions |
+
+| Method       | Path                           |                                                          |
+|--------------|--------------------------------|----------------------------------------------------------|
+| GET / PUT    | `/users/{id}/roles`            | list / replace all (`{"ids":[1,2]}`)                     |
+| PUT / DELETE | `/users/{id}/roles/{roleId}`   | assign / remove                                          |
+| GET / PUT    | `/users/{id}/groups`           | list / replace all                                       |
+| PUT / DELETE | `/users/{id}/groups/{groupId}` | join / leave                                             |
+| GET          | `/users/{id}/access`           | groups, direct roles, group roles, effective permissions |
 
 ### Groups — `GroupController`, `GroupRelationController`
-| Method | Path | |
-|---|---|---|
-| GET, POST | `/groups` | |
-| GET, PUT, DELETE | `/groups/{id}` | |
-| GET | `/groups/{id}/members` | paged |
-| PUT / DELETE | `/groups/{id}/members/{userId}` | add / remove member |
-| GET / PUT | `/groups/{id}/roles` | list / replace all |
-| PUT / DELETE | `/groups/{id}/roles/{roleId}` | add / remove |
+
+| Method           | Path                                      |                                                                                     |
+|------------------|-------------------------------------------|-------------------------------------------------------------------------------------|
+| GET, POST        | `/groups`                                 |                                                                                     |
+| GET, PUT, DELETE | `/groups/{id}`                            |                                                                                     |
+| GET              | `/groups/{id}/members`                    | paged                                                                               |
+| PUT / DELETE     | `/groups/{id}/members/{userId}`           | add / remove member                                                                 |
+| GET / PUT        | `/groups/{id}/roles`                      | list / replace all                                                                  |
+| PUT / DELETE     | `/groups/{id}/roles/{roleId}`             | add / remove                                                                        |
+| GET / PUT        | `/groups/{id}/permissions`                | permissions granted **directly** to the group: list / replace all (`{"ids":[1,2]}`) |
+| PUT / DELETE     | `/groups/{id}/permissions/{permissionId}` | grant / revoke (idempotent, `204`)                                                  |
 
 ### Roles — `RoleController`, `RoleRelationController`
-| Method | Path | |
-|---|---|---|
-| GET, POST | `/roles` | names are `UPPER_SNAKE_CASE` |
-| GET, PUT, DELETE | `/roles/{id}` | |
-| GET / PUT | `/roles/{id}/permissions` | list / replace all |
-| PUT / DELETE | `/roles/{id}/permissions/{permissionId}` | grant / revoke |
-| GET | `/roles/{id}/users` | users with the role directly (paged) |
-| GET | `/roles/{id}/groups` | groups with the role |
+
+| Method           | Path                                     |                                      |
+|------------------|------------------------------------------|--------------------------------------|
+| GET, POST        | `/roles`                                 | names are `UPPER_SNAKE_CASE`         |
+| GET, PUT, DELETE | `/roles/{id}`                            |                                      |
+| GET / PUT        | `/roles/{id}/permissions`                | list / replace all                   |
+| PUT / DELETE     | `/roles/{id}/permissions/{permissionId}` | grant / revoke                       |
+| GET              | `/roles/{id}/users`                      | users with the role directly (paged) |
+| GET              | `/roles/{id}/groups`                     | groups with the role                 |
 
 ### Permissions — `PermissionController`, `PermissionRelationController`
-| Method | Path | |
-|---|---|---|
-| GET, POST | `/permissions` | |
-| GET, PUT, DELETE | `/permissions/{id}` | |
-| GET | `/permissions/{id}/roles` | roles that grant it (grant/revoke is done on the role) |
+
+| Method           | Path                       |                                                                          |
+|------------------|----------------------------|--------------------------------------------------------------------------|
+| GET, POST        | `/permissions`             |                                                                          |
+| GET, PUT, DELETE | `/permissions/{id}`        |                                                                          |
+| GET              | `/permissions/{id}/roles`  | roles that grant it (grant/revoke is done on the role)                   |
+| GET              | `/permissions/{id}/groups` | groups that have it granted directly (grant/revoke is done on the group) |
 
 Errors are Problem Details JSON: `404` unknown id, `409` duplicate / concurrent edit,
 `400` validation (with an `errors` map of field -> message).
@@ -124,8 +139,8 @@ curl -X PUT localhost:8080/api/v1/users/3/roles/4
 
 ```
 src/main/resources/db
-├── migration/    V1 core tables, V2 join tables      <- every environment
-└── sample-data/  V1000__sample_data.sql               <- default (H2) profile only
+├── migration/    V1 core tables, V2 join tables, V3 indexes, V6 group_permissions  <- every environment
+└── sample-data/  V1000 sample data, V1001 sample group permissions   <- default (H2) profile only
 ```
 
 * Hibernate runs with `ddl-auto: validate`; **Flyway owns the schema**.
@@ -134,6 +149,32 @@ src/main/resources/db
 * Sample data is inserted without hard-coded ids (rows are linked by natural keys), so it never
   desynchronizes identity sequences.
 * New schema changes: add `V3__...sql` to `db/migration`. Never edit an applied migration.
+
+## Performance & scalability (millions of rows)
+
+| Area             | What is done                                                                                                                                   | Where                                                                       |
+|------------------|------------------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------|
+| Pagination       | Offset pages for UI, **keyset (seek) pagination** for deep / bulk reads; COUNT skipped when not needed; page size capped at 100                | `UserSearchRepositoryImpl`, `GET /users/scroll`, `spring.data.web.pageable` |
+| Sorting          | Only indexed columns may be sorted on (`id`, `username`, `email`, `createdAt`) -> `400` otherwise                                              | `service/Sorts`                                                             |
+| Projections      | List endpoints select only the needed columns straight into records (no entity, no `password_hash`, no dirty checking)                         | `UserSearchRepositoryImpl`, `UserRepository`                                |
+| Effective access | 5 light statements returning strings; permissions via one `UNION` SQL                                                                          | `UserRelationService#getAccess`, `PermissionRepository`                     |
+| Indexes          | `(active,id)`, `(created_at,id)`; join-table PKs + reverse indexes; PostgreSQL GIN trigram indexes for `contains` search, built `CONCURRENTLY` | `V3`, `db/postgres/V4,V5`                                                   |
+| N+1 / batching   | `default_batch_fetch_size=50`, JDBC `batch_size=50`, `order_inserts/updates`, `fail_on_pagination_over_collection_fetch`                       | `application.yaml`                                                          |
+| Connections      | Fixed-size Hikari pool, 3 s acquire timeout, `auto-commit=false` + `provider_disables_autocommit`, leak detection (postgres)                   | `application*.yaml`                                                         |
+| Safety nets      | Slow-query log (500 ms), Hibernate query timeout 10 s and `reWriteBatchedInserts` (postgres)                                                   | `application*.yaml`                                                         |
+| Caching          | Roles / permissions / groups lists cached (Caffeine, 5 min, evicted **after commit**)                                                          | `CacheConfig`, services                                                     |
+| Regression tests | Assert SQL statement counts per endpoint (no N+1, no stray COUNT)                                                                              | `QueryCountTest`                                                            |
+
+Notes
+
+* Trigram search needs `CREATE EXTENSION pg_trgm` (V4). On managed PostgreSQL the migration user must be allowed
+  to create extensions. Four GIN indexes cost write throughput and disk - drop the ones you do not search.
+* `V5` must contain only `CREATE INDEX CONCURRENTLY` statements (they cannot run inside a transaction).
+* The pool size is a **database** capacity decision. With virtual threads enabled, thousands of requests can wait on
+  a pool of 20, so keep `connection-timeout` short and scale the pool by what PostgreSQL can serve.
+* IDs use `IDENTITY`, which disables JDBC insert batching. For bulk loading use `JdbcTemplate.batchUpdate` or
+  `COPY`, or switch to pooled sequences (`allocationSize = 50`) in a new migration.
+* The cache is per instance; staleness is bounded by the 5-minute TTL. Use Redis if you need exact invalidation.
 
 ## Moving to PostgreSQL
 
@@ -145,14 +186,15 @@ DB_PASSWORD=usermgmt mvn spring-boot:run -Dspring-boot.run.profiles=postgres
 ```
 
 The `postgres` profile (`application-postgres.yaml`) reads `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`
-from the environment and loads **only** `db/migration` (no sample data). Nothing else changes.
+(and optionally `DB_POOL_SIZE`) from the environment and loads `db/migration` + `db/postgres`
+(PostgreSQL-only index migrations), **never** the sample data.
 
-Before production also consider: authentication/authorization for this API (it is open right now),
-a sequence-based id strategy if you need JDBC insert batching (`IDENTITY` disables it), and
-case-insensitive uniqueness for group names (`citext` or a lower(name) unique index).
+Before production also consider: authentication/authorization for this API (it is open right now)
+and case-insensitive uniqueness for group names (`citext` or a lower (name) unique index).
 
 ## Tests
 
 * `UserServiceTest` – Mockito unit tests (success + conflict + not found).
+* `QueryCountTest` – asserts the number of SQL statements per endpoint (N+1 / COUNT regressions).
 * `UserManagementApiTest` – full-stack MockMvc tests against H2 with the real Flyway migrations and
   sample data (CRUD, validation errors, relations, effective access, cascade deletes). Rolled back per test.

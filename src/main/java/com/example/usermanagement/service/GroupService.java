@@ -1,11 +1,14 @@
 package com.example.usermanagement.service;
 
+import com.example.usermanagement.config.CacheConfig;
 import com.example.usermanagement.dto.group.GroupRequest;
 import com.example.usermanagement.dto.group.GroupResponse;
 import com.example.usermanagement.exception.DuplicateResourceException;
 import com.example.usermanagement.exception.ResourceNotFoundException;
 import com.example.usermanagement.model.UserGroup;
 import com.example.usermanagement.repository.UserGroupRepository;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -21,6 +24,7 @@ public class GroupService {
         this.groupRepository = groupRepository;
     }
 
+    @Cacheable(CacheConfig.GROUPS)
     public List<GroupResponse> findAll() {
         return groupRepository.findAllByOrderByNameAsc().stream().map(GroupResponse::from).toList();
     }
@@ -30,6 +34,7 @@ public class GroupService {
     }
 
     @Transactional
+    @CacheEvict(cacheNames = CacheConfig.GROUPS, allEntries = true)
     public GroupResponse create(GroupRequest request) {
         String name = request.name().trim();
         if (groupRepository.existsByName(name)) {
@@ -42,6 +47,7 @@ public class GroupService {
     }
 
     @Transactional
+    @CacheEvict(cacheNames = CacheConfig.GROUPS, allEntries = true)
     public GroupResponse update(Long id, GroupRequest request) {
         UserGroup group = getEntity(id);
         String name = request.name().trim();
@@ -54,6 +60,7 @@ public class GroupService {
     }
 
     @Transactional
+    @CacheEvict(cacheNames = CacheConfig.GROUPS, allEntries = true)
     public void delete(Long id) {
         groupRepository.delete(getEntity(id));
     }

@@ -2,6 +2,7 @@ package com.example.usermanagement.controller;
 
 import com.example.usermanagement.dto.common.IdSetRequest;
 import com.example.usermanagement.dto.common.PageResponse;
+import com.example.usermanagement.dto.permission.PermissionResponse;
 import com.example.usermanagement.dto.role.RoleResponse;
 import com.example.usermanagement.dto.user.UserResponse;
 import com.example.usermanagement.service.GroupRelationService;
@@ -14,7 +15,7 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 
 /**
- * Everything a group is related to: its members and its roles.
+ * Everything a group is related to: its members, its roles and the permissions granted to it directly.
  */
 @RestController
 @RequestMapping("/api/v1/groups/{groupId}")
@@ -72,5 +73,36 @@ public class GroupRelationController {
     @PutMapping("/roles")
     public List<RoleResponse> replaceRoles(@PathVariable Long groupId, @Valid @RequestBody IdSetRequest request) {
         return relationService.replaceRoles(groupId, request.ids());
+    }
+
+    // ------------------------------------------------------------ permissions
+
+    /**
+     * Permissions granted directly to the group (every member gets them, no role needed).
+     */
+    @GetMapping("/permissions")
+    public List<PermissionResponse> getPermissions(@PathVariable Long groupId) {
+        return relationService.getPermissions(groupId);
+    }
+
+    @PutMapping("/permissions/{permissionId}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void addPermission(@PathVariable Long groupId, @PathVariable Long permissionId) {
+        relationService.addPermission(groupId, permissionId);
+    }
+
+    @DeleteMapping("/permissions/{permissionId}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void removePermission(@PathVariable Long groupId, @PathVariable Long permissionId) {
+        relationService.removePermission(groupId, permissionId);
+    }
+
+    /**
+     * Replace the complete set of permissions granted directly to the group.
+     */
+    @PutMapping("/permissions")
+    public List<PermissionResponse> replacePermissions(@PathVariable Long groupId,
+                                                       @Valid @RequestBody IdSetRequest request) {
+        return relationService.replacePermissions(groupId, request.ids());
     }
 }

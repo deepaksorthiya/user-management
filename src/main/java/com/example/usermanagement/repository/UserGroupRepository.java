@@ -18,10 +18,25 @@ public interface UserGroupRepository extends JpaRepository<UserGroup, Long> {
 
     List<UserGroup> findAllByOrderByNameAsc();
 
-    /** Groups that have the role assigned. */
+    /**
+     * Groups that have the permission granted directly.
+     */
+    List<UserGroup> findByPermissionsIdOrderByNameAsc(Long permissionId);
+
+    /**
+     * Groups that have the role assigned.
+     */
     List<UserGroup> findByRolesIdOrderByNameAsc(Long roleId);
 
-    /** Groups the user is a member of. */
+    /**
+     * Names only (no entity hydration): groups the user is a member of.
+     */
+    @Query("select g.name from User u join u.userGroups g where u.id = :userId order by g.name")
+    List<String> findNamesByUserId(@Param("userId") Long userId);
+
+    /**
+     * Groups the user is a member of.
+     */
     @Query("select g from User u join u.userGroups g where u.id = :userId order by g.name")
     List<UserGroup> findByUserId(@Param("userId") Long userId);
 }

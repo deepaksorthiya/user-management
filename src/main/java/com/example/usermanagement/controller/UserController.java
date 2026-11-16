@@ -1,12 +1,17 @@
 package com.example.usermanagement.controller;
 
 import com.example.usermanagement.dto.common.PageResponse;
+import com.example.usermanagement.dto.common.ScrollResponse;
 import com.example.usermanagement.dto.user.PasswordChangeRequest;
 import com.example.usermanagement.dto.user.UserCreateRequest;
 import com.example.usermanagement.dto.user.UserResponse;
 import com.example.usermanagement.dto.user.UserUpdateRequest;
 import com.example.usermanagement.service.UserService;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.Positive;
+import jakarta.validation.constraints.Size;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.web.PageableDefault;
 import org.springframework.http.HttpStatus;
@@ -30,14 +35,30 @@ public class UserController {
     }
 
     /**
-     * GET /api/v1/users?q=ali&active=true&page=0&size=20&sort=username,asc
+     * Offset pagination: GET /api/v1/users?q=ali&active=true&page=0&size=20&sort=username,asc
+     * Sort is limited to id, username, email, createdAt. Search text needs at least 3 characters
+     * (trigram indexes cannot help with shorter terms).
      */
     @GetMapping
     public PageResponse<UserResponse> list(
-            @RequestParam(required = false) String q,
+            @RequestParam(required = false) @Size(min = 3, max = 100) String q,
             @RequestParam(required = false) Boolean active,
             @PageableDefault(size = 20, sort = "username") Pageable pageable) {
         return userService.search(q, active, pageable);
+    }
+
+    /**
+     * Keyset pagination for big result sets / exports / infinite scroll:
+     * GET /api/v1/users/scroll?size=100            -> first page
+     * GET /api/v1/users/scroll?size=100&after=123  -> pass the previous response's nextCursor
+     */
+    @GetMapping("/scroll")
+    public ScrollResponse<UserResponse> scroll(
+            @RequestParam(required = false) @Size(min = 3, max = 100) String q,
+            @RequestParam(required = false) Boolean active,
+            @RequestParam(required = false) @Positive Long after,
+            @RequestParam(defaultValue = "50") @Min(1) @Max(200) int size) {
+        return userService.scroll(q, active, after, size);
     }
 
     @GetMapping("/{id}")

@@ -7,7 +7,8 @@ import java.util.Set;
 
 /**
  * A group of users. Named UserGroup (table user_groups) because GROUP / GROUPS are
- * reserved words in SQL and HQL. Members inherit every role assigned to the group.
+ * reserved words in SQL and HQL. Members inherit every role AND every permission assigned
+ * to the group.
  */
 @Entity
 @Table(name = "user_groups")
@@ -28,6 +29,16 @@ public class UserGroup extends BaseEntity {
             joinColumns = @JoinColumn(name = "group_id"),
             inverseJoinColumns = @JoinColumn(name = "role_id"))
     private Set<Role> roles = new HashSet<>();
+
+    /**
+     * Owning side of group <-> permission: granted directly, without going through a role.
+     */
+    @ManyToMany
+    @JoinTable(
+            name = "group_permissions",
+            joinColumns = @JoinColumn(name = "group_id"),
+            inverseJoinColumns = @JoinColumn(name = "permission_id"))
+    private Set<Permission> permissions = new HashSet<>();
 
     public UserGroup() {
     }
@@ -54,6 +65,14 @@ public class UserGroup extends BaseEntity {
 
     public void setRoles(Set<Role> roles) {
         this.roles = roles;
+    }
+
+    public Set<Permission> getPermissions() {
+        return permissions;
+    }
+
+    public void setPermissions(Set<Permission> permissions) {
+        this.permissions = permissions;
     }
 
     @Override

@@ -1,6 +1,7 @@
 package com.example.usermanagement.service;
 
 import com.example.usermanagement.dto.common.PageResponse;
+import com.example.usermanagement.dto.common.ScrollResponse;
 import com.example.usermanagement.dto.user.PasswordChangeRequest;
 import com.example.usermanagement.dto.user.UserCreateRequest;
 import com.example.usermanagement.dto.user.UserResponse;
@@ -9,18 +10,19 @@ import com.example.usermanagement.exception.DuplicateResourceException;
 import com.example.usermanagement.exception.ResourceNotFoundException;
 import com.example.usermanagement.model.User;
 import com.example.usermanagement.repository.UserRepository;
-import com.example.usermanagement.repository.UserSpecifications;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.List;
 import java.util.Locale;
 
-/** CRUD for users. Assignments (roles, groups) live in {@link UserRelationService}. */
+/**
+ * CRUD for users. Assignments (roles, groups) live in {@link UserRelationService}.
+ */
 @Service
 @Transactional(readOnly = true)
 public class UserService {
@@ -35,9 +37,24 @@ public class UserService {
         this.passwordEncoder = passwordEncoder;
     }
 
+    /**
+     * Offset pagination (random access to page N). Sort is limited to indexed columns.
+     */
     public PageResponse<UserResponse> search(String q, Boolean active, Pageable pageable) {
-        Page<User> page = userRepository.findAll(UserSpecifications.matching(q, active), pageable);
-        return PageResponse.from(page.map(UserResponse::from));
+        Sorts.require(pageable, Sorts.USER);
+        return PageResponse.from(userRepository.search(q, active, pageable));
+    }
+
+    /**
+     * Keyset pagination: constant cost per page, however deep the client is.
+     */
+    public ScrollResponse<UserResponse> scroll(String q, Boolean active, Long after, int size) {
+        // fetch one extra row to learn whether another page exists, without a COUNT query
+        List<UserResponse> rows = userRepository.searchAfter(q, active, after, size + 1);
+        boolean hasNext = rows.size() > size;
+        List<UserResponse> page = hasNext ? List.copyOf(rows.subList(0, size)) : List.copyOf(rows);
+        Long nextCursor = hasNext ? page.get(page.size() - 1).id() : null;
+        return new ScrollResponse<>(page, page.size(), hasNext, nextCursor);
     }
 
     public UserResponse get(Long id) {

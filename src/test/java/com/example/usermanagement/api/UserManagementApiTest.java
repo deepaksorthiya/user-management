@@ -8,6 +8,7 @@ import com.example.usermanagement.repository.PermissionRepository;
 import com.example.usermanagement.repository.RoleRepository;
 import com.example.usermanagement.repository.UserGroupRepository;
 import com.example.usermanagement.repository.UserRepository;
+import com.jayway.jsonpath.JsonPath;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -17,6 +18,7 @@ import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.transaction.annotation.Transactional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -437,6 +439,210 @@ class UserManagementApiTest {
             mockMvc.perform(get("/api/v1/permissions/{p}", auditView)).andExpect(status().isNotFound());
             mockMvc.perform(get("/api/v1/roles/{r}/permissions", roleId("AUDITOR")))
                     .andExpect(jsonPath("$[*].name", not(hasItem("AUDIT_VIEW"))));
+        }
+    }
+
+    // ------------------------------------------------- pagination & limits
+
+    @Nested
+    class Pagination {
+
+        @Test
+        void scroll_walksAllUsersInIdOrderWithoutGapsOrDuplicates() throws Exception {
+            MvcResult first = mockMvc.perform(get("/api/v1/users/scroll").param("size", "4"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.content", hasSize(4)))
+                    .andExpect(jsonPath("$.hasNext").value(true))
+                    .andExpect(jsonPath("$.nextCursor").isNumber())
+                    .andReturn();
+            long cursor = ((Number) JsonPath.read(first.getResponse().getContentAsString(), "$.nextCursor")).longValue();
+
+            mockMvc.perform(get("/api/v1/users/scroll").param("size", "4").param("after", String.valueOf(cursor)))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.content", hasSize(2)))     // 6 sample users in total
+                    .andExpect(jsonPath("$.hasNext").value(false))
+                    .andExpect(jsonPath("$.nextCursor").doesNotExist());
+        }
+
+        @Test
+        void scroll_appliesFilters() throws Exception {
+            mockMvc.perform(get("/api/v1/users/scroll").param("active", "false"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.content", hasSize(1)))
+                    .andExpect(jsonPath("$.content[0].username").value("dave"))
+                    .andExpect(jsonPath("$.hasNext").value(false));
+        }
+
+        @Test
+        void scroll_rejectsOutOfRangeSize() throws Exception {
+            mockMvc.perform(get("/api/v1/users/scroll").param("size", "0")).andExpect(status().isBadRequest());
+            mockMvc.perform(get("/api/v1/users/scroll").param("size", "100000")).andExpect(status().isBadRequest());
+        }
+
+        @Test
+        void list_rejectsTooShortSearchTerm() throws Exception {
+            mockMvc.perform(get("/api/v1/users").param("q", "ab")).andExpect(status().isBadRequest());
+        }
+
+        @Test
+        void list_rejectsSortOnUnindexedOrSensitiveColumns() throws Exception {
+            mockMvc.perform(get("/api/v1/users").param("sort", "passwordHash"))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.detail").value(org.hamcrest.Matchers.containsString("Unsupported sort property")));
+            mockMvc.perform(get("/api/v1/groups/{g}/members", groupId("Engineering")).param("sort", "nope"))
+                    .andExpect(status().isBadRequest());
+        }
+
+        @Test
+        void list_sortsByAllowedColumns() throws Exception {
+            mockMvc.perform(get("/api/v1/users").param("sort", "createdAt,desc"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.totalElements").value(6));
+
+            mockMvc.perform(get("/api/v1/groups/{g}/members", groupId("Support Team")).param("sort", "username,desc"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.content[0].username").value("erin"));
+        }
+
+        @Test
+        void list_pageSizeIsCapped() throws Exception {
+            mockMvc.perform(get("/api/v1/users").param("size", "100000"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.size").value(100));
+        }
+    }
+
+    // ------------------------------------------- permissions granted to groups
+
+    @Nested
+    class GroupPermissions {
+
+        @Test
+        void sampleData_engineeringHasReportViewDirectly() throws Exception {
+            mockMvc.perform(get("/api/v1/groups/{g}/permissions", groupId("Engineering")))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$[*].name", containsInAnyOrder("REPORT_VIEW")));
+        }
+
+        @Test
+        void grantAndRevoke_isIdempotent() throws Exception {
+            Long finance = groupId("Finance"); // no direct permissions in the sample data
+            Long userDelete = permissionId("USER_DELETE");
+
+            mockMvc.perform(get("/api/v1/groups/{g}/permissions", finance)).andExpect(jsonPath("$", hasSize(0)));
+
+            mockMvc.perform(put("/api/v1/groups/{g}/permissions/{p}", finance, userDelete)).andExpect(status().isNoContent());
+            mockMvc.perform(put("/api/v1/groups/{g}/permissions/{p}", finance, userDelete)).andExpect(status().isNoContent());
+            mockMvc.perform(get("/api/v1/groups/{g}/permissions", finance))
+                    .andExpect(jsonPath("$", hasSize(1)))
+                    .andExpect(jsonPath("$[0].name").value("USER_DELETE"));
+
+            mockMvc.perform(delete("/api/v1/groups/{g}/permissions/{p}", finance, userDelete)).andExpect(status().isNoContent());
+            mockMvc.perform(delete("/api/v1/groups/{g}/permissions/{p}", finance, userDelete)).andExpect(status().isNoContent());
+            mockMvc.perform(get("/api/v1/groups/{g}/permissions", finance)).andExpect(jsonPath("$", hasSize(0)));
+        }
+
+        @Test
+        void replace_setsExactlyTheGivenPermissions() throws Exception {
+            Long support = groupId("Support Team"); // GROUP_READ in the sample data
+            String body = "{\"ids\":[%d,%d]}".formatted(permissionId("USER_DELETE"), permissionId("ROLE_READ"));
+
+            mockMvc.perform(put("/api/v1/groups/{g}/permissions", support)
+                            .contentType(MediaType.APPLICATION_JSON).content(body))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$[*].name", containsInAnyOrder("USER_DELETE", "ROLE_READ")));
+
+            mockMvc.perform(get("/api/v1/groups/{g}/permissions", support))
+                    .andExpect(jsonPath("$[*].name", containsInAnyOrder("USER_DELETE", "ROLE_READ")));
+        }
+
+        @Test
+        void replace_withUnknownIdOrMissingBody_isRejected() throws Exception {
+            Long support = groupId("Support Team");
+
+            mockMvc.perform(put("/api/v1/groups/{g}/permissions", support)
+                            .contentType(MediaType.APPLICATION_JSON).content("{\"ids\":[999999]}"))
+                    .andExpect(status().isNotFound());
+            mockMvc.perform(put("/api/v1/groups/{g}/permissions", support)
+                            .contentType(MediaType.APPLICATION_JSON).content("{}"))
+                    .andExpect(status().isBadRequest());
+        }
+
+        @Test
+        void unknownGroupOrPermission_returns404() throws Exception {
+            mockMvc.perform(get("/api/v1/groups/{g}/permissions", 999_999)).andExpect(status().isNotFound());
+            mockMvc.perform(put("/api/v1/groups/{g}/permissions/{p}", 999_999, permissionId("USER_READ")))
+                    .andExpect(status().isNotFound());
+            mockMvc.perform(put("/api/v1/groups/{g}/permissions/{p}", groupId("Finance"), 999_999))
+                    .andExpect(status().isNotFound());
+            mockMvc.perform(delete("/api/v1/groups/{g}/permissions/{p}", groupId("Finance"), 999_999))
+                    .andExpect(status().isNotFound());
+        }
+
+        @Test
+        void membersInheritDirectGroupPermissions_inEffectiveAccess() throws Exception {
+            Long carol = userId("carol");      // member of Finance, role AUDITOR (no USER_DELETE)
+            Long finance = groupId("Finance");
+            Long userDelete = permissionId("USER_DELETE");
+
+            mockMvc.perform(get("/api/v1/users/{u}/access", carol))
+                    .andExpect(jsonPath("$.permissions", not(hasItem("USER_DELETE"))));
+
+            mockMvc.perform(put("/api/v1/groups/{g}/permissions/{p}", finance, userDelete)).andExpect(status().isNoContent());
+            mockMvc.perform(get("/api/v1/users/{u}/access", carol))
+                    .andExpect(jsonPath("$.permissions", hasItem("USER_DELETE")))
+                    .andExpect(jsonPath("$.groupRoles", containsInAnyOrder("AUDITOR"))); // role path unchanged
+
+            mockMvc.perform(delete("/api/v1/groups/{g}/permissions/{p}", finance, userDelete)).andExpect(status().isNoContent());
+            mockMvc.perform(get("/api/v1/users/{u}/access", carol))
+                    .andExpect(jsonPath("$.permissions", not(hasItem("USER_DELETE"))));
+        }
+
+        @Test
+        void sampleDirectGroupPermissionsAppearInAccess_andNonMembersAreNotAffected() throws Exception {
+            // Engineering -> REPORT_VIEW directly. alice (Engineering, role VIEWER) gets it; bob (Support Team only) does not.
+            mockMvc.perform(get("/api/v1/users/{u}/access", userId("alice")))
+                    .andExpect(jsonPath("$.permissions", hasItem("REPORT_VIEW")));
+            mockMvc.perform(get("/api/v1/users/{u}/access", userId("bob")))
+                    .andExpect(jsonPath("$.permissions", not(hasItem("REPORT_VIEW"))))
+                    .andExpect(jsonPath("$.permissions", hasItem("GROUP_READ"))); // Support Team -> GROUP_READ directly
+        }
+
+        @Test
+        void joiningAGroup_grantsItsDirectPermissions() throws Exception {
+            Long bob = userId("bob");
+            mockMvc.perform(put("/api/v1/users/{u}/groups/{g}", bob, groupId("Engineering"))).andExpect(status().isNoContent());
+
+            mockMvc.perform(get("/api/v1/users/{u}/access", bob))
+                    .andExpect(jsonPath("$.permissions", hasItem("REPORT_VIEW")));
+        }
+
+        @Test
+        void permissionGroups_listsGroupsThatHaveItDirectly() throws Exception {
+            mockMvc.perform(get("/api/v1/permissions/{p}/groups", permissionId("REPORT_VIEW")))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$[*].name", containsInAnyOrder("Engineering")));
+
+            mockMvc.perform(get("/api/v1/permissions/{p}/groups", 999_999)).andExpect(status().isNotFound());
+        }
+
+        @Test
+        void deletingAPermission_removesItFromGroups() throws Exception {
+            Long reportView = permissionId("REPORT_VIEW");
+            Long engineering = groupId("Engineering");
+
+            mockMvc.perform(delete("/api/v1/permissions/{p}", reportView)).andExpect(status().isNoContent());
+
+            mockMvc.perform(get("/api/v1/groups/{g}/permissions", engineering)).andExpect(jsonPath("$", hasSize(0)));
+        }
+
+        @Test
+        void deletingAGroup_removesItsPermissionAssignments() throws Exception {
+            Long reportView = permissionId("REPORT_VIEW");
+
+            mockMvc.perform(delete("/api/v1/groups/{g}", groupId("Engineering"))).andExpect(status().isNoContent());
+
+            mockMvc.perform(get("/api/v1/permissions/{p}/groups", reportView)).andExpect(jsonPath("$", hasSize(0)));
         }
     }
 }

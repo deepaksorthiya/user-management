@@ -1,5 +1,6 @@
 package com.example.usermanagement.controller;
 
+import com.example.usermanagement.dto.group.GroupResponse;
 import com.example.usermanagement.dto.role.RoleResponse;
 import com.example.usermanagement.service.PermissionRelationService;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -10,8 +11,9 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 
 /**
- * Read-only view of a permission's relations. The role -> permission link is owned by the role,
- * so grant / revoke lives in {@link RoleRelationController}.
+ * Read-only view of a permission's relations. The role -> permission link is owned by the role
+ * ({@link RoleRelationController}) and the group -> permission link by the group
+ * ({@link GroupRelationController}), so grant / revoke lives there.
  */
 @RestController
 @RequestMapping("/api/v1/permissions/{permissionId}")
@@ -23,9 +25,19 @@ public class PermissionRelationController {
         this.relationService = relationService;
     }
 
-    /** Roles that grant this permission. */
+    /**
+     * Roles that grant this permission.
+     */
     @GetMapping("/roles")
     public List<RoleResponse> getRoles(@PathVariable Long permissionId) {
         return relationService.getRoles(permissionId);
+    }
+
+    /**
+     * Groups that have this permission granted directly.
+     */
+    @GetMapping("/groups")
+    public List<GroupResponse> getGroups(@PathVariable Long permissionId) {
+        return relationService.getGroups(permissionId);
     }
 }

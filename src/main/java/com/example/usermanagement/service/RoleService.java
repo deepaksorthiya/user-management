@@ -1,11 +1,14 @@
 package com.example.usermanagement.service;
 
+import com.example.usermanagement.config.CacheConfig;
 import com.example.usermanagement.dto.role.RoleRequest;
 import com.example.usermanagement.dto.role.RoleResponse;
 import com.example.usermanagement.exception.DuplicateResourceException;
 import com.example.usermanagement.exception.ResourceNotFoundException;
 import com.example.usermanagement.model.Role;
 import com.example.usermanagement.repository.RoleRepository;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -21,6 +24,7 @@ public class RoleService {
         this.roleRepository = roleRepository;
     }
 
+    @Cacheable(CacheConfig.ROLES)
     public List<RoleResponse> findAll() {
         return roleRepository.findAllByOrderByNameAsc().stream().map(RoleResponse::from).toList();
     }
@@ -30,6 +34,7 @@ public class RoleService {
     }
 
     @Transactional
+    @CacheEvict(cacheNames = CacheConfig.ROLES, allEntries = true)
     public RoleResponse create(RoleRequest request) {
         if (roleRepository.existsByName(request.name())) {
             throw new DuplicateResourceException("Role '%s' already exists".formatted(request.name()));
@@ -41,6 +46,7 @@ public class RoleService {
     }
 
     @Transactional
+    @CacheEvict(cacheNames = CacheConfig.ROLES, allEntries = true)
     public RoleResponse update(Long id, RoleRequest request) {
         Role role = getEntity(id);
         if (roleRepository.existsByNameAndIdNot(request.name(), id)) {
@@ -51,8 +57,11 @@ public class RoleService {
         return RoleResponse.from(roleRepository.saveAndFlush(role));
     }
 
-    /** Also removes the role from every user, group and permission link (ON DELETE CASCADE). */
+    /**
+     * Also removes the role from every user, group and permission link (ON DELETE CASCADE).
+     */
     @Transactional
+    @CacheEvict(cacheNames = CacheConfig.ROLES, allEntries = true)
     public void delete(Long id) {
         roleRepository.delete(getEntity(id));
     }

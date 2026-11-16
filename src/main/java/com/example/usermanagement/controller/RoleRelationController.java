@@ -10,18 +10,13 @@ import jakarta.validation.Valid;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.web.PageableDefault;
 import org.springframework.http.HttpStatus;
-import org.springframework.web.bind.annotation.DeleteMapping;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.PutMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.ResponseStatus;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 
-/** Everything a role is related to: its permissions, and the users / groups it is assigned to. */
+/**
+ * Everything a role is related to: its permissions, and the users / groups it is assigned to.
+ */
 @RestController
 @RequestMapping("/api/v1/roles/{roleId}")
 public class RoleRelationController {
@@ -51,7 +46,9 @@ public class RoleRelationController {
         relationService.removePermission(roleId, permissionId);
     }
 
-    /** Replace the complete set of permissions of the role. */
+    /**
+     * Replace the complete set of permissions of the role.
+     */
     @PutMapping("/permissions")
     public List<PermissionResponse> replacePermissions(@PathVariable Long roleId,
                                                        @Valid @RequestBody IdSetRequest request) {
@@ -60,7 +57,9 @@ public class RoleRelationController {
 
     // ------------------------------------------------------- who has the role
 
-    /** Users that have the role assigned directly. */
+    /**
+     * Users that have the role assigned directly.
+     */
     @GetMapping("/users")
     public PageResponse<UserResponse> getUsers(
             @PathVariable Long roleId,
@@ -68,7 +67,9 @@ public class RoleRelationController {
         return relationService.getUsers(roleId, pageable);
     }
 
-    /** Groups that have the role assigned. */
+    /**
+     * Groups that have the role assigned.
+     */
     @GetMapping("/groups")
     public List<GroupResponse> getGroups(@PathVariable Long roleId) {
         return relationService.getGroups(roleId);
