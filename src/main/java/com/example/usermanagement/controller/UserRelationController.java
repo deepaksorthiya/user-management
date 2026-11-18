@@ -2,6 +2,7 @@ package com.example.usermanagement.controller;
 
 import com.example.usermanagement.dto.common.IdSetRequest;
 import com.example.usermanagement.dto.group.GroupResponse;
+import com.example.usermanagement.dto.permission.PermissionResponse;
 import com.example.usermanagement.dto.role.RoleResponse;
 import com.example.usermanagement.dto.user.UserAccessResponse;
 import com.example.usermanagement.service.UserRelationService;
@@ -76,6 +77,37 @@ public class UserRelationController {
     @PutMapping("/groups")
     public List<GroupResponse> replaceGroups(@PathVariable Long userId, @Valid @RequestBody IdSetRequest request) {
         return relationService.replaceGroups(userId, request.ids());
+    }
+
+    // ------------------------------------------------------------ permissions
+
+    /**
+     * Permissions granted directly to the user, on top of what roles and groups give.
+     */
+    @GetMapping("/permissions")
+    public List<PermissionResponse> getPermissions(@PathVariable Long userId) {
+        return relationService.getPermissions(userId);
+    }
+
+    @PutMapping("/permissions/{permissionId}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void addPermission(@PathVariable Long userId, @PathVariable Long permissionId) {
+        relationService.addPermission(userId, permissionId);
+    }
+
+    @DeleteMapping("/permissions/{permissionId}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void removePermission(@PathVariable Long userId, @PathVariable Long permissionId) {
+        relationService.removePermission(userId, permissionId);
+    }
+
+    /**
+     * Replace the complete set of permissions granted directly to the user.
+     */
+    @PutMapping("/permissions")
+    public List<PermissionResponse> replacePermissions(@PathVariable Long userId,
+                                                       @Valid @RequestBody IdSetRequest request) {
+        return relationService.replacePermissions(userId, request.ids());
     }
 
     // ----------------------------------------------------------------- access

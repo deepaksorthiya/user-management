@@ -1,8 +1,7 @@
 -- group <-> permission: a permission granted directly to a group, so every member of the group
 -- gets it without needing a role. (Roles assigned to the group keep working as before.)
 -- ON DELETE CASCADE: deleting a group or a permission cleans up the assignment.
-CREATE TABLE group_permissions
-(
+CREATE TABLE group_permissions (
     group_id      BIGINT NOT NULL,
     permission_id BIGINT NOT NULL,
     CONSTRAINT pk_group_permissions PRIMARY KEY (group_id, permission_id),

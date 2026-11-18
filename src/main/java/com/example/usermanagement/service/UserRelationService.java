@@ -1,9 +1,11 @@
 package com.example.usermanagement.service;
 
 import com.example.usermanagement.dto.group.GroupResponse;
+import com.example.usermanagement.dto.permission.PermissionResponse;
 import com.example.usermanagement.dto.role.RoleResponse;
 import com.example.usermanagement.dto.user.UserAccessResponse;
 import com.example.usermanagement.exception.ResourceNotFoundException;
+import com.example.usermanagement.model.Permission;
 import com.example.usermanagement.model.Role;
 import com.example.usermanagement.model.User;
 import com.example.usermanagement.model.UserGroup;
@@ -16,7 +18,7 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * What a user is linked to: direct roles, group memberships and the resulting access.
+ * What a user is linked to: direct roles and permissions, group memberships and the resulting access.
  */
 @Service
 @Transactional(readOnly = true)
@@ -107,6 +109,44 @@ public class UserRelationService {
 
     // ----------------------------------------------------------------- access
 
+    // ------------------------------------------------------------ permissions
+
+    /**
+     * Permissions granted directly to the user (not the ones coming from roles or groups).
+     */
+    public List<PermissionResponse> getPermissions(Long userId) {
+        requireUser(userId);
+        return permissionRepository.findByUserId(userId).stream().map(PermissionResponse::from).toList();
+    }
+
+    /**
+     * Idempotent: granting an already granted permission is a no-op.
+     */
+    @Transactional
+    public void addPermission(Long userId, Long permissionId) {
+        getUser(userId).getPermissions().add(getPermission(permissionId));
+    }
+
+    /**
+     * Idempotent: revoking a permission that is not granted is a no-op.
+     */
+    @Transactional
+    public void removePermission(Long userId, Long permissionId) {
+        getUser(userId).getPermissions().remove(getPermission(permissionId));
+    }
+
+    @Transactional
+    public List<PermissionResponse> replacePermissions(Long userId, Set<Long> permissionIds) {
+        User user = getUser(userId);
+        Set<Permission> permissions = Lookups.loadAll(permissionRepository, permissionIds, "Permission");
+        user.getPermissions().retainAll(permissions);
+        user.getPermissions().addAll(permissions);
+        return permissions.stream()
+                .map(PermissionResponse::from)
+                .sorted(Comparator.comparing(PermissionResponse::name))
+                .toList();
+    }
+
     /**
      * Flattens direct roles + group roles into the user's final permission set.
      * Five lightweight statements (header, groups, direct roles, group roles, permissions),
@@ -136,6 +176,10 @@ public class UserRelationService {
 
     private User getUser(Long id) {
         return userRepository.findById(id).orElseThrow(() -> ResourceNotFoundException.of("User", id));
+    }
+
+    private Permission getPermission(Long id) {
+        return permissionRepository.findById(id).orElseThrow(() -> ResourceNotFoundException.of("Permission", id));
     }
 
     private Role getRole(Long id) {

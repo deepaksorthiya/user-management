@@ -11,7 +11,7 @@ import java.util.Set;
  *   <li>roles       -> user_roles     (direct role assignment)</li>
  *   <li>userGroups  -> group_members  (group membership)</li>
  * </ul>
- * Effective access = direct roles + roles of every group the user belongs to.
+ * Effective access = direct permissions + direct roles + roles/permissions of every group the user belongs to.
  */
 @Entity
 @Table(name = "users")
@@ -48,6 +48,16 @@ public class User extends BaseEntity {
             joinColumns = @JoinColumn(name = "user_id"),
             inverseJoinColumns = @JoinColumn(name = "group_id"))
     private Set<UserGroup> userGroups = new HashSet<>();
+
+    /**
+     * Owning side of user <-> permission: granted directly, without a role or group.
+     */
+    @ManyToMany
+    @JoinTable(
+            name = "user_permissions",
+            joinColumns = @JoinColumn(name = "user_id"),
+            inverseJoinColumns = @JoinColumn(name = "permission_id"))
+    private Set<Permission> permissions = new HashSet<>();
 
     public User() {
     }
@@ -114,6 +124,14 @@ public class User extends BaseEntity {
 
     public void setUserGroups(Set<UserGroup> userGroups) {
         this.userGroups = userGroups;
+    }
+
+    public Set<Permission> getPermissions() {
+        return permissions;
+    }
+
+    public void setPermissions(Set<Permission> permissions) {
+        this.permissions = permissions;
     }
 
     @Override

@@ -19,6 +19,12 @@ public interface PermissionRepository extends JpaRepository<Permission, Long> {
     List<Permission> findAllByOrderByNameAsc();
 
     /**
+     * Permissions granted directly to a user.
+     */
+    @Query("select p from User u join u.permissions p where u.id = :userId order by p.name")
+    List<Permission> findByUserId(@Param("userId") Long userId);
+
+    /**
      * Permissions granted directly to a group.
      */
     @Query("select p from UserGroup g join g.permissions p where g.id = :groupId order by p.name")
@@ -31,9 +37,9 @@ public interface PermissionRepository extends JpaRepository<Permission, Long> {
     List<Permission> findByRoleId(@Param("roleId") Long roleId);
 
     /**
-     * Effective permission names of a user in ONE round trip, from three sources:
+     * Effective permission names of a user in ONE round trip, from four sources:
      * (1) roles assigned to the user, (2) roles assigned to the user's groups,
-     * (3) permissions granted directly to the user's groups. UNION de-duplicates in the database,
+     * (3) permissions granted directly to the user's groups, (4) permissions granted directly to the user. UNION de-duplicates in the database,
      * and no Permission entity is ever hydrated. Plain SQL, portable across H2 and PostgreSQL.
      */
     @Query(value = """
@@ -55,6 +61,11 @@ public interface PermissionRepository extends JpaRepository<Permission, Long> {
               join group_permissions gpm on gpm.permission_id = p.id
               join group_members gm on gm.group_id = gpm.group_id
              where gm.user_id = :userId
+            union
+            select p.name as name
+              from permissions p
+              join user_permissions up on up.permission_id = p.id
+             where up.user_id = :userId
             order by name
             """, nativeQuery = true)
     List<String> findEffectiveNamesByUserId(@Param("userId") Long userId);

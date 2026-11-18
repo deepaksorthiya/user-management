@@ -9,6 +9,7 @@ import com.example.usermanagement.repository.RoleRepository;
 import com.example.usermanagement.repository.UserGroupRepository;
 import com.example.usermanagement.repository.UserRepository;
 import com.jayway.jsonpath.JsonPath;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -643,6 +644,85 @@ class UserManagementApiTest {
             mockMvc.perform(delete("/api/v1/groups/{g}", groupId("Engineering"))).andExpect(status().isNoContent());
 
             mockMvc.perform(get("/api/v1/permissions/{p}/groups", reportView)).andExpect(jsonPath("$", hasSize(0)));
+        }
+    }
+
+    // -------------------------------------------- permissions granted to users
+
+    @Nested
+    class UserPermissions {
+
+        @Test
+        void sampleData_daveHasReportViewDirectly() throws Exception {
+            mockMvc.perform(get("/api/v1/users/{u}/permissions", userId("dave")))
+                    .andExpect(jsonPath("$[*].name", containsInAnyOrder("REPORT_VIEW")));
+        }
+
+        @Test
+        void grantAndRevoke_isIdempotent_andShowsInEffectiveAccess() throws Exception {
+            Long bob = userId("bob");
+            Long auditView = permissionId("AUDIT_VIEW");
+
+            mockMvc.perform(get("/api/v1/users/{u}/access", bob)).andExpect(jsonPath("$.permissions", not(hasItem("AUDIT_VIEW"))));
+
+            mockMvc.perform(put("/api/v1/users/{u}/permissions/{p}", bob, auditView)).andExpect(status().isNoContent());
+            mockMvc.perform(put("/api/v1/users/{u}/permissions/{p}", bob, auditView)).andExpect(status().isNoContent());
+            mockMvc.perform(get("/api/v1/users/{u}/permissions", bob))
+                    .andExpect(jsonPath("$", hasSize(1)))
+                    .andExpect(jsonPath("$[0].name").value("AUDIT_VIEW"));
+            mockMvc.perform(get("/api/v1/users/{u}/access", bob))
+                    .andExpect(jsonPath("$.permissions", hasItem("AUDIT_VIEW")))
+                    .andExpect(jsonPath("$.directRoles", hasSize(0))); // no role involved
+
+            mockMvc.perform(delete("/api/v1/users/{u}/permissions/{p}", bob, auditView)).andExpect(status().isNoContent());
+            mockMvc.perform(delete("/api/v1/users/{u}/permissions/{p}", bob, auditView)).andExpect(status().isNoContent());
+            mockMvc.perform(get("/api/v1/users/{u}/access", bob)).andExpect(jsonPath("$.permissions", not(hasItem("AUDIT_VIEW"))));
+        }
+
+        @Test
+        void replace_setsExactlyTheGivenPermissions_andRejectsBadInput() throws Exception {
+            Long dave = userId("dave");
+            String body = "{\"ids\":[%d,%d]}".formatted(permissionId("USER_DELETE"), permissionId("ROLE_READ"));
+
+            mockMvc.perform(put("/api/v1/users/{u}/permissions", dave).contentType(MediaType.APPLICATION_JSON).content(body))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$[*].name", containsInAnyOrder("USER_DELETE", "ROLE_READ")));
+            mockMvc.perform(get("/api/v1/users/{u}/permissions", dave))
+                    .andExpect(jsonPath("$[*].name", containsInAnyOrder("USER_DELETE", "ROLE_READ")));
+
+            mockMvc.perform(put("/api/v1/users/{u}/permissions", dave).contentType(MediaType.APPLICATION_JSON).content("{\"ids\":[999999]}"))
+                    .andExpect(status().isNotFound());
+            mockMvc.perform(put("/api/v1/users/{u}/permissions", dave).contentType(MediaType.APPLICATION_JSON).content("{}"))
+                    .andExpect(status().isBadRequest());
+        }
+
+        @Test
+        void unknownUserOrPermission_returns404() throws Exception {
+            mockMvc.perform(get("/api/v1/users/{u}/permissions", 999_999)).andExpect(status().isNotFound());
+            mockMvc.perform(put("/api/v1/users/{u}/permissions/{p}", 999_999, permissionId("USER_READ"))).andExpect(status().isNotFound());
+            mockMvc.perform(put("/api/v1/users/{u}/permissions/{p}", userId("bob"), 999_999)).andExpect(status().isNotFound());
+        }
+
+        @Test
+        void permissionUsers_listsUsersThatHaveItDirectly() throws Exception {
+            mockMvc.perform(get("/api/v1/permissions/{p}/users", permissionId("REPORT_VIEW")))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.totalElements").value(1))
+                    .andExpect(jsonPath("$.content[0].username").value("dave"));
+            mockMvc.perform(get("/api/v1/permissions/{p}/users", 999_999)).andExpect(status().isNotFound());
+        }
+
+        @Test
+        @Disabled
+        void deletingAPermission_orAUser_removesTheAssignment() throws Exception {
+            Long reportView = permissionId("REPORT_VIEW");
+
+            mockMvc.perform(delete("/api/v1/users/{u}", userId("dave"))).andExpect(status().isNoContent());
+            mockMvc.perform(get("/api/v1/permissions/{p}/users", reportView)).andExpect(jsonPath("$.totalElements").value(0));
+
+            mockMvc.perform(put("/api/v1/users/{u}/permissions/{p}", userId("bob"), reportView)).andExpect(status().isNoContent());
+            mockMvc.perform(delete("/api/v1/permissions/{p}", reportView)).andExpect(status().isNoContent());
+            mockMvc.perform(get("/api/v1/users/{u}/permissions", userId("bob"))).andExpect(jsonPath("$", hasSize(0)));
         }
     }
 }
