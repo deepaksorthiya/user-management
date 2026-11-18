@@ -1,6 +1,6 @@
 # user-management
 
-Spring Boot 4.1 / Java 21 REST API for **users, groups, roles and permissions**
+Spring Boot 4.1 / Java 25 REST API for **users, groups, roles and permissions**
 (Spring Data JPA + Hibernate, Flyway, H2 now, PostgreSQL later). Version `0.3.0`.
 
 > `groupId` is the placeholder `com.example`; change it (and the package) to yours.
@@ -31,12 +31,13 @@ Effective access of a user = the union of
 1. permissions of the roles assigned **directly to the user**,
 2. permissions of the roles assigned to **every group the user is in**,
 3. permissions granted **directly to every group the user is in** (`group_permissions`),
+4. permissions granted **directly to the user** (`user_permissions`),
 
 flattened and de-duplicated (`GET /users/{id}/access`, one SQL statement for the permissions).
 
 | Entity       | Table         | Owns (JPA `@ManyToMany`)                                 |
 |--------------|---------------|----------------------------------------------------------|
-| `User`       | `users`       | `roles` (user_roles), `userGroups` (group_members)       |
+| `User`       | `users`       | `roles` (user_roles), `userGroups` (group_members), `permissions` (user_permissions)       |
 | `UserGroup`  | `user_groups` | `roles` (group_roles), `permissions` (group_permissions) |
 | `Role`       | `roles`       | `permissions` (role_permissions)                         |
 | `Permission` | `permissions` | nothing (looked up through queries)                      |
@@ -88,6 +89,8 @@ Lists of users / members / role assignees are **paged**: `?page=0&size=20&sort=u
 | PUT / DELETE | `/users/{id}/roles/{roleId}`   | assign / remove                                          |
 | GET / PUT    | `/users/{id}/groups`           | list / replace all                                       |
 | PUT / DELETE | `/users/{id}/groups/{groupId}` | join / leave                                             |
+| GET / PUT    | `/users/{id}/permissions`     | list / replace direct permission grants                 |
+| PUT / DELETE | `/users/{id}/permissions/{permissionId}` | grant / revoke directly                      |
 | GET          | `/users/{id}/access`           | groups, direct roles, group roles, effective permissions |
 
 ### Groups — `GroupController`, `GroupRelationController`
@@ -121,6 +124,7 @@ Lists of users / members / role assignees are **paged**: `?page=0&size=20&sort=u
 | GET, POST        | `/permissions`             |                                                                          |
 | GET, PUT, DELETE | `/permissions/{id}`        |                                                                          |
 | GET              | `/permissions/{id}/roles`  | roles that grant it (grant/revoke is done on the role)                   |
+| GET              | `/permissions/{id}/users` | paged users with direct grants (grant/revoke through user) |
 | GET              | `/permissions/{id}/groups` | groups that have it granted directly (grant/revoke is done on the group) |
 
 Errors are Problem Details JSON: `404` unknown id, `409` duplicate / concurrent edit,
@@ -198,3 +202,52 @@ and case-insensitive uniqueness for group names (`citext` or a lower (name) uniq
 * `QueryCountTest` – asserts the number of SQL statements per endpoint (N+1 / COUNT regressions).
 * `UserManagementApiTest` – full-stack MockMvc tests against H2 with the real Flyway migrations and
   sample data (CRUD, validation errors, relations, effective access, cascade deletes). Rolled back per test.
+
+## Forma web workspace
+
+A responsive, dependency-free management UI is bundled into the Spring Boot JAR.
+Start the application and open **http://localhost:8080/**. Java **25** is required
+by `pom.xml`.
+
+The UI uses the existing `/api/v1` endpoints on the same origin. No separate
+frontend server, build, external font, CDN, or CORS configuration is required.
+
+- Overview: live record counts, recent users, API health, and activity from this browser session.
+- Users: create/read/update/delete, active status, password changes, server search
+  (three-character minimum), status filters, sorting, pagination, and filtered CSV
+  export using the keyset endpoint. Export includes all matching users, in ID order.
+- Groups, roles, and permissions: CRUD, local search, and pagination.
+- Relationships: assign/remove user roles, groups, and direct permissions; group
+  members, roles, and direct permissions; role permissions, users, and groups;
+  permission roles, groups, and directly assigned users. Reverse views change
+  assignments through the owning API.
+- “Manage all” replaces complete assignment sets for user roles/groups/permissions,
+  group roles/permissions, and role permissions. Empty selection clears assignments.
+- Effective access shows groups, direct user permissions, direct roles, inherited
+  roles, and the combined permission set. Removing a direct grant preserves any
+  access still inherited through a role or group. This reflects the existing API; it does not add authentication
+  or change the backend's authorization behavior.
+- Forms retain input on API errors, destructive actions require confirmation, and
+  relationship and user pickers handle large user directories with server pagination.
+  Dialogs support Escape and tab navigation; detail tabs support arrow/Home/End keys.
+
+### Verification
+
+```bash
+bash mvnw clean verify    # Java tests and executable JAR (requires JDK 25)
+npm ci                   # Development-only DOM test dependency
+npm test                 # API client and UI interaction regression tests
+# With a disposable application instance running:
+python tests/api-smoke.py http://127.0.0.1:8080
+node tests/live-ui.mjs http://127.0.0.1:8080 # Actual UI code against live API
+```
+
+The DOM tests exercise rendered forms, API payloads, errors, all twelve relationship
+views, bulk clearing, keyboard tabs, and untrusted text escaping. They run without
+a browser and do not establish visual rendering. The live UI test executes the actual frontend code against the running backend
+using a DOM environment. It checks form submissions, assignment changes, inherited
+permissions, and backend validation without a browser engine. The live smoke test creates
+uniquely named records, exercises actual API operations, and deletes its records
+in a `finally` block. Run it against a disposable development/test database.
+The backend's default H2 database is in memory; use the existing PostgreSQL profile
+when durable storage is needed. Frontend test dependencies are not packaged in the JAR.
