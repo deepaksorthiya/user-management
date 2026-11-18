@@ -31,12 +31,13 @@ Effective access of a user = the union of
 1. permissions of the roles assigned **directly to the user**,
 2. permissions of the roles assigned to **every group the user is in**,
 3. permissions granted **directly to every group the user is in** (`group_permissions`),
+4. permissions granted **directly to the user** (`user_permissions`),
 
 flattened and de-duplicated (`GET /users/{id}/access`, one SQL statement for the permissions).
 
 | Entity       | Table         | Owns (JPA `@ManyToMany`)                                 |
 |--------------|---------------|----------------------------------------------------------|
-| `User`       | `users`       | `roles` (user_roles), `userGroups` (group_members)       |
+| `User`       | `users`       | `roles` (user_roles), `userGroups` (group_members), `permissions` (user_permissions)       |
 | `UserGroup`  | `user_groups` | `roles` (group_roles), `permissions` (group_permissions) |
 | `Role`       | `roles`       | `permissions` (role_permissions)                         |
 | `Permission` | `permissions` | nothing (looked up through queries)                      |
@@ -88,6 +89,8 @@ Lists of users / members / role assignees are **paged**: `?page=0&size=20&sort=u
 | PUT / DELETE | `/users/{id}/roles/{roleId}`   | assign / remove                                          |
 | GET / PUT    | `/users/{id}/groups`           | list / replace all                                       |
 | PUT / DELETE | `/users/{id}/groups/{groupId}` | join / leave                                             |
+| GET / PUT    | `/users/{id}/permissions`     | list / replace direct permission grants                 |
+| PUT / DELETE | `/users/{id}/permissions/{permissionId}` | grant / revoke directly                      |
 | GET          | `/users/{id}/access`           | groups, direct roles, group roles, effective permissions |
 
 ### Groups — `GroupController`, `GroupRelationController`
@@ -121,6 +124,7 @@ Lists of users / members / role assignees are **paged**: `?page=0&size=20&sort=u
 | GET, POST        | `/permissions`             |                                                                          |
 | GET, PUT, DELETE | `/permissions/{id}`        |                                                                          |
 | GET              | `/permissions/{id}/roles`  | roles that grant it (grant/revoke is done on the role)                   |
+| GET              | `/permissions/{id}/users` | paged users with direct grants (grant/revoke through user) |
 | GET              | `/permissions/{id}/groups` | groups that have it granted directly (grant/revoke is done on the group) |
 
 Errors are Problem Details JSON: `404` unknown id, `409` duplicate / concurrent edit,
@@ -213,13 +217,15 @@ frontend server, build, external font, CDN, or CORS configuration is required.
   (three-character minimum), status filters, sorting, pagination, and filtered CSV
   export using the keyset endpoint. Export includes all matching users, in ID order.
 - Groups, roles, and permissions: CRUD, local search, and pagination.
-- Relationships: assign/remove user roles and groups; group members, roles, and
-  direct permissions; role permissions, users, and groups; permission roles and
-  groups. Reverse views change assignments through the owning API.
-- “Manage all” replaces complete assignment sets for user roles/groups, group
-  roles/permissions, and role permissions. Empty selection clears assignments.
-- Effective access shows groups, direct roles, inherited roles, and the combined
-  permission set. This reflects the existing API; it does not add authentication
+- Relationships: assign/remove user roles, groups, and direct permissions; group
+  members, roles, and direct permissions; role permissions, users, and groups;
+  permission roles, groups, and directly assigned users. Reverse views change
+  assignments through the owning API.
+- “Manage all” replaces complete assignment sets for user roles/groups/permissions,
+  group roles/permissions, and role permissions. Empty selection clears assignments.
+- Effective access shows groups, direct user permissions, direct roles, inherited
+  roles, and the combined permission set. Removing a direct grant preserves any
+  access still inherited through a role or group. This reflects the existing API; it does not add authentication
   or change the backend's authorization behavior.
 - Forms retain input on API errors, destructive actions require confirmation, and
   relationship and user pickers handle large user directories with server pagination.
@@ -236,7 +242,7 @@ python tests/api-smoke.py http://127.0.0.1:8080
 node tests/live-ui.mjs http://127.0.0.1:8080 # Actual UI code against live API
 ```
 
-The DOM tests exercise rendered forms, API payloads, errors, all ten relationship
+The DOM tests exercise rendered forms, API payloads, errors, all twelve relationship
 views, bulk clearing, keyboard tabs, and untrusted text escaping. They run without
 a browser and do not establish visual rendering. The live UI test executes the actual frontend code against the running backend
 using a DOM environment. It checks form submissions, assignment changes, inherited

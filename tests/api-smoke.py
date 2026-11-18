@@ -76,6 +76,8 @@ try:
     p = permission['id']
     permission2 = create('permissions', {'name':f'QA_WRITE_{tag}','description':'Direct group permission'})
     p2 = permission2['id']
+    direct = create('permissions', {'name':f'QA_DIRECT_{tag}','description':'Direct user permission'})
+    pd = direct['id']
     for kind, item in [('users',user),('groups',group),('roles',role),('permissions',permission)]:
         check(request(f'{kind}/{item["id"]}')['id'] == item['id'], f'{kind} read failed')
         request(kind)
@@ -96,10 +98,12 @@ try:
     if page['hasNext']:
         next_page = request(f'users/scroll?size=1&after={page["nextCursor"]}')
         check(next_page['content'][0]['id'] > page['content'][0]['id'],'Keyset cursor did not advance')
-    for path, target in [(f'users/{u}/roles',r),(f'users/{u}/groups',g),(f'groups/{g}/members',u),(f'groups/{g}/roles',r),(f'groups/{g}/permissions',p),(f'roles/{r}/permissions',p)]:
+    for path, target in [(f'users/{u}/roles',r),(f'users/{u}/groups',g),(f'users/{u}/permissions',pd),(f'groups/{g}/members',u),(f'groups/{g}/roles',r),(f'groups/{g}/permissions',p),(f'roles/{r}/permissions',p)]:
         linked(path,target,paged='/members' in path)
-    for path, target in [(f'users/{u}/roles',r),(f'users/{u}/groups',g),(f'groups/{g}/roles',r),(f'groups/{g}/permissions',p),(f'roles/{r}/permissions',p)]:
+    for path, target in [(f'users/{u}/roles',r),(f'users/{u}/groups',g),(f'users/{u}/permissions',pd),(f'groups/{g}/roles',r),(f'groups/{g}/permissions',p),(f'roles/{r}/permissions',p)]:
         replace(path,target)
+    request(f'users/{u}/permissions/9223372036854775807', 'PUT', expected=404)
+    request(f'users/{u}/permissions', 'PUT', {'ids':None}, expected=400)
     # Build a complete inheritance graph and inspect every reverse relationship.
     request(f'users/{u}/roles/{r}','PUT',expected=204)
     request(f'users/{u}/groups/{g}','PUT',expected=204)
@@ -110,15 +114,27 @@ try:
     check(g in ids(request(f'roles/{r}/groups')), 'Reverse role groups missing')
     check(r in ids(request(f'permissions/{p}/roles')), 'Reverse permission roles missing')
     check(g in ids(request(f'permissions/{p2}/groups')), 'Reverse permission groups missing')
+    request(f'users/{u}/permissions/{pd}','PUT',expected=204)
+    check(u in ids(request(f'permissions/{pd}/users?size=1&sort=username,asc')['content']), 'Reverse direct permission users missing')
+    request(f'users/{u}/permissions', 'PUT', {'ids':[9223372036854775807]}, expected=404)
+    check(ids(request(f'users/{u}/permissions')) == {pd}, 'Failed bulk replacement changed existing grants')
+    # A permission may be granted directly and inherited at the same time.
+    request(f'users/{u}/permissions/{p}','PUT',expected=204)
+    request(f'users/{u}/permissions/{p}','DELETE',expected=204)
+    check(permission['name'] in request(f'users/{u}/access')['permissions'], 'Direct revoke removed inherited permission')
     access = request(f'users/{u}/access')
     check(role['name'] in access['directRoles'] and role['name'] in access['groupRoles'], 'Direct/inherited roles missing')
     check(group['name'] in access['groups'], 'Access groups missing')
-    check(set(access['permissions']) == {permission['name'],permission2['name']}, 'Effective permission union is wrong')
+    check(set(access['permissions']) == {permission['name'],permission2['name'],direct['name']}, 'Effective permission union is wrong')
     # Deletion cascades are observable through the same read paths the UI uses.
     request(f'roles/{r}','DELETE',expected=204)
     created.remove(('roles',r))
     check(request(f'users/{u}/roles') == [], 'Deleted role left user assignments')
-    check(request(f'users/{u}/access')['permissions'] == [permission2['name']], 'Access did not update after role deletion')
+    check(set(request(f'users/{u}/access')['permissions']) == {permission2['name'],direct['name']}, 'Role deletion removed independent grants')
+    request(f'permissions/{pd}','DELETE',expected=204)
+    created.remove(('permissions',pd))
+    check(request(f'users/{u}/permissions') == [], 'Permission deletion left direct user grants')
+    check(request(f'users/{u}/access')['permissions'] == [permission2['name']], 'Permission deletion did not update effective access')
 finally:
     for kind, item_id in reversed(created):
         request(f'{kind}/{item_id}','DELETE',expected=204)

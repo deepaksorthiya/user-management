@@ -360,6 +360,7 @@ test("effective access renders all direct, inherited and group permissions", asy
 for (const [kind, tab, target, endpoint] of [
   ["users", "roles", "roles", "users/1/roles/1"],
   ["users", "groups", "groups", "users/1/groups/1"],
+  ["users", "permissions", "permissions", "users/1/permissions/1"],
   ["groups", "members", "users", "groups/1/members/1"],
   ["groups", "roles", "roles", "groups/1/roles/1"],
   ["groups", "permissions", "permissions", "groups/1/permissions/1"],
@@ -368,6 +369,7 @@ for (const [kind, tab, target, endpoint] of [
   ["roles", "groups", "groups", "groups/1/roles/1"],
   ["permissions", "roles", "roles", "roles/1/permissions/1"],
   ["permissions", "groups", "groups", "groups/1/permissions/1"],
+  ["permissions", "users", "users", "users/1/permissions/1"],
 ])
   test(`${kind} → ${tab}: displays records, adds and removes through correct API`, async () => {
     const t = await setup();
@@ -397,6 +399,7 @@ for (const [kind, tab, target, endpoint] of [
 for (const [kind, tab] of [
   ["users", "roles"],
   ["users", "groups"],
+  ["users", "permissions"],
   ["groups", "roles"],
   ["groups", "permissions"],
   ["roles", "permissions"],
@@ -572,6 +575,80 @@ test("closing a loading picker cannot overwrite a newer form", async () => {
     await pending;
     assert.ok(t.$('#modal [name="username"]'));
     assert.equal(t.$("#choice-results"), null);
+  } finally {
+    t.close();
+  }
+});
+
+test("user permissions tab is discoverable and explains direct-only revocation", async () => {
+  const t = await setup();
+  try {
+    await t.w.__app.openDetail("users", 1);
+    assert.equal(t.$("#tab-permissions").textContent, "Direct permissions");
+    t.click("#tab-permissions");
+    await until(() => t.$("#tab-panel table"));
+    assert.match(
+      t.$("#tab-panel").textContent,
+      /preserves permissions inherited/,
+    );
+    assert.ok(t.$('[data-action="replace"]'));
+  } finally {
+    t.close();
+  }
+});
+
+test("effective access distinguishes direct grants from the combined permission set", async () => {
+  const t = await setup();
+  try {
+    const fetch = t.w.fetch;
+    t.w.fetch = (url, options) =>
+      url === "/api/v1/users/1/permissions"
+        ? Promise.resolve(
+            new Response(JSON.stringify([{ id: 3, name: "DIRECT_ONLY" }])),
+          )
+        : fetch(url, options);
+    await t.w.__app.openDetail("users", 1, "access");
+    const sections = [...t.w.document.querySelectorAll(".access-section")];
+    const direct = sections.find((section) =>
+      section.textContent.includes("Direct user permissions"),
+    );
+    const effective = sections.find((section) =>
+      section.textContent.includes("Effective permissions"),
+    );
+    assert.match(direct.textContent, /DIRECT_ONLY/);
+    assert.doesNotMatch(direct.textContent, /READ_USERS/);
+    assert.match(effective.textContent, /READ_USERS/);
+    assert.match(t.$("#tab-panel").textContent, /direct user grants/);
+  } finally {
+    t.close();
+  }
+});
+
+test("direct permission load failure offers retry instead of showing incomplete access", async () => {
+  const t = await setup();
+  try {
+    const fetch = t.w.fetch;
+    let fail = true;
+    t.w.fetch = (url, options) => {
+      if (url === "/api/v1/users/1/permissions" && fail) {
+        fail = false;
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({ detail: "Permission lookup unavailable" }),
+            { status: 503 },
+          ),
+        );
+      }
+      return fetch(url, options);
+    };
+    await t.w.__app.openDetail("users", 1, "access");
+    assert.match(
+      t.$("#tab-panel").textContent,
+      /Permission lookup unavailable/,
+    );
+    t.click('[data-action="retry-tab"]');
+    await until(() => t.$(".access-flow"));
+    assert.match(t.$("#tab-panel").textContent, /Direct user permissions/);
   } finally {
     t.close();
   }

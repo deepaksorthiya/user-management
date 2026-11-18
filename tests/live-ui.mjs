@@ -159,6 +159,64 @@ try {
         item.status === 204,
     ),
   );
+  // Direct-only grants are distinct from inherited access in the UI.
+  const direct = await api("permissions", "POST", {
+    name: `LIVE_DIRECT_${tag}`,
+    description: "Direct user grant",
+  });
+  created.push(["permissions", direct.id]);
+  await add("users", u, "permissions", direct.id);
+  await w.__app.openDetail("users", u, "access");
+  const sections = [...w.document.querySelectorAll(".access-section")];
+  const directSection = sections.find((section) =>
+    section.textContent.includes("Direct user permissions"),
+  );
+  assert.match(directSection.textContent, new RegExp(direct.name));
+  assert.doesNotMatch(
+    directSection.textContent,
+    new RegExp(`LIVE_READ_${tag}`),
+  );
+  assert.ok((await api(`users/${u}/access`)).permissions.includes(direct.name));
+  // The reverse view grants through the user API and revoking preserves inheritance.
+  await add("permissions", p, "users", u);
+  assert.ok(
+    requests.some(
+      (item) =>
+        item.path === `/api/v1/users/${u}/permissions/${p}` &&
+        item.method === "PUT" &&
+        item.status === 204,
+    ),
+  );
+  await w.__app.openDetail("permissions", p, "users");
+  assert.match($("#tab-panel").textContent, new RegExp(`live_${tag}`));
+  click(`[data-action="unlink"][data-id="${u}"]`);
+  await submit();
+  assert.ok(
+    (await api(`users/${u}/access`)).permissions.includes(`LIVE_READ_${tag}`),
+    "Direct revoke must preserve inherited access",
+  );
+  await w.__app.openDetail("users", u, "permissions");
+  click('[data-action="replace"]');
+  await until(() => $(`[name="target"][value="${direct.id}"]`));
+  assert.equal(
+    $(`[name="target"][value="${direct.id}"]`).checked,
+    true,
+    "Manage all preselects saved direct grants",
+  );
+  for (const input of w.document.querySelectorAll('[name="target"]')) {
+    input.checked = false;
+    input.dispatchEvent(new w.Event("change", { bubbles: true }));
+  }
+  await submit();
+  assert.deepEqual(
+    await api(`users/${u}/permissions`),
+    [],
+    "Bulk clear persisted",
+  );
+  assert.ok(
+    (await api(`users/${u}/access`)).permissions.includes(`LIVE_READ_${tag}`),
+    "Bulk clearing direct grants preserves inherited access",
+  );
   await w.__app.openDetail("users", u, "roles");
   click('[data-action="replace"]');
   await until(() => $(`[name="target"][value="${r}"]`));

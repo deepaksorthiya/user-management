@@ -28,10 +28,10 @@ const descriptions = {
     "The building blocks of access. See exactly where each permission is granted.",
 };
 const relations = {
-  users: ["roles", "groups", "access"],
+  users: ["roles", "groups", "permissions", "access"],
   groups: ["members", "roles", "permissions"],
   roles: ["permissions", "users", "groups"],
-  permissions: ["roles", "groups"],
+  permissions: ["roles", "groups", "users"],
 };
 const state = {
   view: "overview",
@@ -157,7 +157,7 @@ async function overview(token) {
   $("#page").innerHTML =
     `${statCards(counts)}<section class="hero"><div><div class="eyebrow">CONNECTED BY DESIGN</div><h2>The right access. For every person.</h2><p>A thoughtful workspace starts with clear connections.<br>Organize your people, define roles, and make access simple.</p><a href="#groups">Manage your connections <span aria-hidden="true">↗</span></a></div><div class="hero-art" aria-hidden="true"><div class="orbit"></div><div class="orbit-core">◇</div><span class="orbit-node n1">♙</span><span class="orbit-node n2">⌑</span><span class="orbit-node n3">▦</span></div></section>
   <div class="grid-two"><section class="card"><div class="card-header"><div><h2>Recently added people</h2><p>A growing workspace, one person at a time.</p></div><a href="#users">View all users ↗</a></div>${users.content.length ? table(users.content, "users", true) : empty("Your workspace starts here", "Add your first user to start connecting people and access.")}</section>
-  <section class="card"><div class="card-header"><div><h2>How access connects</h2><p>One connected system. Every relationship visible.</p></div></div><div class="connections"><a href="#groups" class="connection-item"><span class="stat-symbol">▦</span><div><strong>Bring people into groups</strong><p>Shared teams, shared possibilities</p></div><span>↗</span></a><a href="#roles" class="connection-item"><span class="stat-symbol">◇</span><div><strong>Give roles a purpose</strong><p>Grant access directly or through groups</p></div><span>↗</span></a><a href="#permissions" class="connection-item"><span class="stat-symbol">⌑</span><div><strong>Make permissions precise</strong><p>See what each person can actually do</p></div><span>↗</span></a></div><div class="mini-note">Open a user’s <strong>Effective access</strong> tab to see direct roles, inherited roles, and combined permissions.</div></section></div>
+  <section class="card"><div class="card-header"><div><h2>How access connects</h2><p>One connected system. Every relationship visible.</p></div></div><div class="connections"><a href="#groups" class="connection-item"><span class="stat-symbol">▦</span><div><strong>Bring people into groups</strong><p>Shared teams, shared possibilities</p></div><span>↗</span></a><a href="#roles" class="connection-item"><span class="stat-symbol">◇</span><div><strong>Give roles a purpose</strong><p>Grant access directly or through groups</p></div><span>↗</span></a><a href="#permissions" class="connection-item"><span class="stat-symbol">⌑</span><div><strong>Make permissions precise</strong><p>See what each person can actually do</p></div><span>↗</span></a></div><div class="mini-note">Open a user’s <strong>Effective access</strong> tab to see direct permissions, direct roles, inherited roles, and combined permissions.</div></section></div>
   <section class="card"><div class="card-header"><div><h2>This session</h2><p>Changes made in this browser session.</p></div><span class="result-count">${activity.length} actions</span></div>${
     activity.length
       ? `<div class="connections">${activity
@@ -401,7 +401,7 @@ async function openDetail(kind, id, tab = "profile") {
     const item = await api(`${kind}/${id}`);
     if (token !== state.detailRequest || !dialog.open) return;
     state.selection.item = item;
-    dialog.innerHTML = `<div class="detail-head"><span class="avatar tone-${item.id % 4}">${escape(kind === "users" ? initials(item) : icons[kind])}</span><div><div class="eyebrow">${singular(kind).toUpperCase()} DETAILS</div><h2 id="detail-title">${escape(item.username || item.name)}</h2><p>${escape(kind === "users" ? item.email : item.description || "No description yet")}</p></div><button class="icon-button" data-action="close-detail" aria-label="Close details">×</button></div><div class="detail-actions"><button class="button" data-action="edit">Edit details</button>${kind === "users" ? '<button class="button" data-action="password">Change password</button>' : ""}<button class="button danger" data-action="delete">Delete ${singular(kind)}</button></div><div class="tabs" role="tablist" aria-label="Record details">${["profile", ...relations[kind]].map((tab) => `<button role="tab" id="tab-${tab}" data-action="tab" data-tab="${tab}" aria-controls="tab-panel">${tab === "profile" ? "Details" : tab === "access" ? "Effective access" : title(tab)}</button>`).join("")}</div><div class="detail-content" id="tab-panel" role="tabpanel" tabindex="0"></div>`;
+    dialog.innerHTML = `<div class="detail-head"><span class="avatar tone-${item.id % 4}">${escape(kind === "users" ? initials(item) : icons[kind])}</span><div><div class="eyebrow">${singular(kind).toUpperCase()} DETAILS</div><h2 id="detail-title">${escape(item.username || item.name)}</h2><p>${escape(kind === "users" ? item.email : item.description || "No description yet")}</p></div><button class="icon-button" data-action="close-detail" aria-label="Close details">×</button></div><div class="detail-actions"><button class="button" data-action="edit">Edit details</button>${kind === "users" ? '<button class="button" data-action="password">Change password</button>' : ""}<button class="button danger" data-action="delete">Delete ${singular(kind)}</button></div><div class="tabs" role="tablist" aria-label="Record details">${["profile", ...relations[kind]].map((tab) => `<button role="tab" id="tab-${tab}" data-action="tab" data-tab="${tab}" aria-controls="tab-panel">${tab === "profile" ? "Details" : tab === "access" ? "Effective access" : kind === "users" && tab === "permissions" ? "Direct permissions" : title(tab)}</button>`).join("")}</div><div class="detail-content" id="tab-panel" role="tabpanel" tabindex="0"></div>`;
     await renderTab();
   } catch (error) {
     if (token === state.detailRequest)
@@ -450,12 +450,19 @@ async function renderTab() {
   }
   try {
     if (tab === "access") {
-      const access = await api(`users/${id}/access`);
+      const [access, directPermissions] = await Promise.all([
+        api(`users/${id}/access`),
+        api(`users/${id}/permissions`),
+      ]);
+      access.directPermissions = directPermissions.map(
+        (permission) => permission.name,
+      );
       if (!detailCurrent(token)) return;
-      panel.innerHTML = `<p class="relation-help">Effective permissions combine direct roles, group roles, and permissions granted directly to groups. Account status: ${access.active ? "active" : "inactive"}.</p><div class="access-flow">${[
+      panel.innerHTML = `<p class="relation-help">Effective permissions combine direct user grants, direct roles, group roles, and permissions granted directly to groups. Removing a direct grant does not remove access still inherited through roles or groups. Account status: ${access.active ? "active" : "inactive"}.</p><div class="access-flow">${[
         ["groups", "Member of groups"],
         ["directRoles", "Direct roles"],
         ["groupRoles", "Inherited group roles"],
+        ["directPermissions", "Direct user permissions"],
         ["permissions", "Effective permissions"],
       ]
         .map(
@@ -477,7 +484,7 @@ async function renderTab() {
     }
     const target = tab === "members" ? "users" : tab;
     const bulk =
-      (kind === "users" && ["roles", "groups"].includes(tab)) ||
+      (kind === "users" && ["roles", "groups", "permissions"].includes(tab)) ||
       (kind === "groups" && ["roles", "permissions"].includes(tab)) ||
       (kind === "roles" && tab === "permissions");
     panel.innerHTML = `<p class="relation-help">${relationHelp(kind, tab)}</p><div class="card"><div class="toolbar"><h2>${title(tab)} <span class="result-count">(${paged ? result.totalElements : items.length})</span></h2><span class="spacer"></span>${bulk ? '<button class="button" data-action="replace">Manage all</button>' : ""}<button class="button primary" data-action="link">+ ${tab === "permissions" ? "Grant permission" : `Add ${singular(target)}`}</button></div>${items.length ? table(items, target, true, true) : empty("No connections yet", `Add ${target} to build this relationship.`)}${paged ? pagination(state.relationPage, result.totalPages, result.totalElements, true) : ""}</div>`;
@@ -486,6 +493,10 @@ async function renderTab() {
   }
 }
 function relationHelp(kind, tab) {
+  if (kind === "users" && tab === "permissions")
+    return "Permissions granted directly to this user, independently of roles and groups. Removing a direct grant preserves permissions inherited through other assignments.";
+  if (kind === "permissions" && tab === "users")
+    return "Users with this permission granted directly. Add or remove direct grants here; inherited access through roles and groups is unchanged.";
   if (kind === "users" && tab === "roles")
     return "Roles assigned directly to this user. Group roles are shown in Effective access.";
   if (kind === "groups" && tab === "permissions")

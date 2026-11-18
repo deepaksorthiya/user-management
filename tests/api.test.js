@@ -63,6 +63,7 @@ test("all forward and reverse assignment routes use their owning API", () => {
   for (const [kind, relation, path] of [
     ["users", "roles", "users/1/roles/2"],
     ["users", "groups", "users/1/groups/2"],
+    ["users", "permissions", "users/1/permissions/2"],
     ["groups", "members", "groups/1/members/2"],
     ["groups", "roles", "groups/1/roles/2"],
     ["groups", "permissions", "groups/1/permissions/2"],
@@ -71,6 +72,7 @@ test("all forward and reverse assignment routes use their owning API", () => {
     ["roles", "groups", "groups/2/roles/1"],
     ["permissions", "roles", "roles/2/permissions/1"],
     ["permissions", "groups", "groups/2/permissions/1"],
+    ["permissions", "users", "users/2/permissions/1"],
   ])
     assert.equal(relationPath(kind, 1, relation, 2), path);
 });
